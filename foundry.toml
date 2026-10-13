@@ -1,0 +1,57 @@
+[fmt]
+line_length = 120
+tab_width = 2
+bracket_spacing = false
+int_types = 'long'
+quote_style = 'single'
+number_underscore = 'thousands'
+multiline_func_header = 'params_first_multi'
+sort_imports = true
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["node_modules", "dependencies"]
+solc_version = '0.8.33'
+# Paris, matching the deployed LayerZero ZRO token. QuipToken lands at ONE
+# address on every chain its OFT mesh reaches, so its bytecode must run on the
+# least-capable EVM in that set: no PUSH0 (Shanghai) and no MCOPY (Cancun).
+evm_version = 'paris'
+optimizer = true
+optimizer_runs = 10_000
+ignored_warnings_from = ["node_modules/", "dependencies/"]
+fs_permissions = [{access = "read", path = "./"}]
+
+[lint]
+exclude_lints = ["mixed-case-function", "mixed-case-variable"]
+
+# Production deployment profile — the only profile the deploy scripts accept.
+# Inherits [profile.default]; only metadata and the out dir differ, so the
+# shipped bytecode is reproducible across machines and cannot be overwritten by
+# an interleaved `forge test`. Neither affects the deployed ADDRESS: CREATE3
+# hashes only the proxy initcode.
+[profile.prod]
+out = 'out-prod'
+bytecode_hash = 'none'
+cbor_metadata = false
+
+[profile.ci]
+
+[dependencies]
+forge-std = "1.14.0"
+solady = "0.1.26"
+
+[soldeer]
+remappings_generate = false
+
+[rpc_endpoints]
+mainnet = "${API_URL_MAINNET}"
+base = "${API_URL_BASE}"
+sepolia = "${API_URL_SEPOLIA}"
+base_sepolia = "${API_URL_BASE_SEPOLIA}"
+
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
+base = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
+sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
