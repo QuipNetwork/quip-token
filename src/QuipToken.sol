@@ -43,13 +43,8 @@ contract QuipToken is OFT {
     string memory symbol_,
     address lzEndpoint_,
     address delegate_,
-    address initialHolder_,
-    address recipient_,
-    bool isNative_
+    address initialHolder_
   ) OFT(name_, symbol_, lzEndpoint_, delegate_) Ownable(delegate_) {
     if (initialHolder_ != address(0)) _mint(initialHolder_, TOTAL_SUPPLY);
-    if (isNative_) {
-      _mint(recipient_, TOTAL_SUPPLY);
-    }
   }
 }
