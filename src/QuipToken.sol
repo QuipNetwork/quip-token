@@ -11,7 +11,7 @@ import {Ownable} from '@openzeppelin/contracts/access/Ownable.sol';
  *      0x6985884C4392D348587B19cb9eAAf157F13271cd). No proxy, no mint function,
  *      no pause, no fees — ERC20 + OFT + Ownable, nothing else.
  *
- *      ONE DELIBERATE DIFFERENCE FROM ZRO. ZRO ships two sources at one address:
+ *      DEPLOYMENT. ZRO ships two sources at one address:
  *      the home-chain build mints the whole supply to a hardcoded treasury, and
  *      every remote-chain build has an empty constructor. QuipToken folds both
  *      into one contract: `initialHolder_` receives the entire `TOTAL_SUPPLY` on
@@ -26,7 +26,8 @@ import {Ownable} from '@openzeppelin/contracts/access/Ownable.sol';
  *
  *      OWNER. Controls LayerZero configuration only (peers, enforced options,
  *      delegate, msg inspector, pre-crime). It cannot mint, freeze, or move
- *      balances.
+ *      balances. Renouncing ownership clears the separate EndpointV2 delegate
+ *      first; if that call fails, ownership is retained.
  */
 contract QuipToken is OFT {
   /// @notice The full supply, minted once on the home chain at deployment.
@@ -46,5 +47,13 @@ contract QuipToken is OFT {
     address initialHolder_
   ) OFT(name_, symbol_, lzEndpoint_, delegate_) Ownable(delegate_) {
     if (initialHolder_ != address(0)) _mint(initialHolder_, TOTAL_SUPPLY);
+  }
+
+  /// @dev Revoke the separate EndpointV2 delegate before ownership is lost.
+  function renounceOwnership() public override onlyOwner {
+    // The immutable EndpointV2 only writes its delegate mapping and emits an
+    // event here; it makes no callback. Keep revocation before ownership loss.
+    endpoint.setDelegate(address(0));
+    super.renounceOwnership();
   }
 }

@@ -9,7 +9,9 @@ ZRO token ([`LayerZeroToken`](https://etherscan.io/token/0x6985884C4392D348587B1
   chain. Remote chains start at zero; OFT `_credit` only re-mints what `_debit`
   burned elsewhere.
 - Shared decimals 6 (OFT default).
-- Owner = LayerZero delegate: configures peers, enforced options and DVNs only.
+- Owner and LayerZero delegate initially share an address. The owner can
+  replace the delegate; renouncing ownership also revokes the current endpoint
+  delegate, so neither retains configuration authority.
 
 ## Difference from ZRO
 
@@ -65,11 +67,17 @@ LayerZero's official metadata):
 
 - peer = the same token address on the remote chain
 - ULN302 send/receive libraries pinned (not following LayerZero defaults)
-- 2-of-2 required DVNs (LayerZero Labs + Nethermind), default optional DVNs off
+- 2-of-2 required DVNs (LayerZero Labs + Nethermind), explicitly stored for
+  this token even when the current defaults match; default optional DVNs off
 - executor with a 10 kB message cap
 - block confirmations: Ethereum 15, Base 10, testnets 2 (source chain's value on both ends)
 - enforced 80k `lzReceive` gas for `SEND` and `SEND_AND_CALL`
 
-It only emits calls that differ from on-chain state, so a fully wired chain
-plans zero calls. Without `DELEGATE_PK` it prints target + calldata for the
+Security overrides are written before selecting their libraries, and the peer
+is enabled only after receive security is configured. Preserve the printed call
+order when executing a multisig plan. Later changes to LayerZero defaults cannot
+change the pinned DVNs, confirmations, or executor.
+
+It only emits calls that differ from the effective and app-specific state, so a
+fully wired chain plans zero calls. Without `DELEGATE_PK` it prints target + calldata for the
 multisig; with it, it broadcasts and re-checks.
