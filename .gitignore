@@ -17,3 +17,6 @@ out-prod/
 # Dependencies (soldeer + bun)
 /dependencies
 /node_modules
+
+# Pinned audit runner downloads, isolated exports and test logs
+/.audit-tools/

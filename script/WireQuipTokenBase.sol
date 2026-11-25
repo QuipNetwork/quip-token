@@ -11,16 +11,24 @@ import {EnforcedOptionParam} from '@layerzerolabs/oapp-evm/contracts/oapp/interf
 import {OptionsBuilder} from '@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol';
 import {Script} from 'forge-std-1.14.0/Script.sol';
 
+interface IAppUlnConfig {
+  function getAppUlnConfig(address oapp, uint32 eid) external view returns (UlnConfig memory);
+}
+
+interface IAppExecutorConfig {
+  function executorConfigs(address oapp, uint32 eid) external view returns (uint32 maxMessageSize, address executor);
+}
+
 /**
  * @title WireQuipTokenBase
  * @dev Computes the calls that bring one chain's QuipToken in line with
  *      `LzConfig`, for every pathway to the other chains in its family:
  *
- *        1. setPeer             — the remote token (same address on every chain)
- *        2. setSendLibrary      — pin ULN302 instead of following the default
- *        3. setReceiveLibrary   — pin ULN302, no grace period
- *        4. setConfig (send)    — executor + 2-of-2 DVNs, this chain's confirmations
- *        5. setConfig (receive) — the same 2-of-2 DVNs, the REMOTE's confirmations
+ *        1. setConfig (send)    — executor + 2-of-2 DVNs, this chain's confirmations
+ *        2. setConfig (receive) — the same 2-of-2 DVNs, the REMOTE's confirmations
+ *        3. setSendLibrary      — pin the configured ULN302 send library
+ *        4. setReceiveLibrary   — pin the configured receive library, no grace
+ *        5. setPeer             — enable the remote after receive security is set
  *        6. setEnforcedOptions  — minimum lzReceive gas for SEND and SEND_AND_CALL
  *
  *      IDEMPOTENT. Each step is compared against current on-chain state and only
@@ -54,9 +62,9 @@ abstract contract WireQuipTokenBase is Script {
     calls = new Call[](remotes.length * 5 + 1);
     uint256 n;
     for (uint256 i; i < remotes.length; i++) {
-      n = _planPeerAndLibraries(token, local, remotes[i].eid, calls, n);
       n = _planSendConfig(token, local, remotes[i].eid, calls, n);
       n = _planReceiveConfig(token, local, remotes[i], calls, n);
+      n = _planLibrariesAndPeer(token, local, remotes[i].eid, calls, n);
     }
     n = _planEnforcedOptions(token, remotes, calls, n);
 
@@ -65,8 +73,8 @@ abstract contract WireQuipTokenBase is Script {
     }
   }
 
-  /// @dev Steps 1-3 for one remote: peer and pinned libraries.
-  function _planPeerAndLibraries(
+  /// @dev Steps 3-5: select configured libraries before enabling the peer.
+  function _planLibrariesAndPeer(
     QuipToken token,
     LzConfig.Chain memory local,
     uint32 eid,
@@ -75,15 +83,7 @@ abstract contract WireQuipTokenBase is Script {
   ) internal view returns (uint256) {
     ILayerZeroEndpointV2 endpoint = token.endpoint();
 
-    // 1. Peer: the token's own address — CREATE3 put it there on every chain.
-    bytes32 peer = bytes32(uint256(uint160(address(token))));
-    if (token.peers(eid) != peer) {
-      calls[n++] = Call(
-        address(token), abi.encodeCall(token.setPeer, (eid, peer)), string.concat('setPeer eid ', vm.toString(eid))
-      );
-    }
-
-    // 2-3. Libraries. An unset library reports the default, so "matches" is not
+    // 3-4. Libraries. An unset library reports the default, so "matches" is not
     //      enough: require it to be pinned (non-default) as well.
     if (
       endpoint.getSendLibrary(address(token), eid) != local.sendLib
@@ -103,10 +103,18 @@ abstract contract WireQuipTokenBase is Script {
         string.concat('setReceiveLibrary eid ', vm.toString(eid))
       );
     }
+    // 5. Peer: the token's own address — CREATE3 put it there on every chain.
+    bytes32 peer = bytes32(uint256(uint160(address(token))));
+    if (token.peers(eid) != peer) {
+      calls[n++] = Call(
+        address(token), abi.encodeCall(token.setPeer, (eid, peer)), string.concat('setPeer eid ', vm.toString(eid))
+      );
+    }
+
     return n;
   }
 
-  /// @dev Step 4: executor + DVNs on the send library, with OUR confirmations.
+  /// @dev Step 1: executor + DVNs on the send library, with OUR confirmations.
   function _planSendConfig(
     QuipToken token,
     LzConfig.Chain memory local,
@@ -132,7 +140,7 @@ abstract contract WireQuipTokenBase is Script {
     return n;
   }
 
-  /// @dev Step 5: DVNs on the receive library — our DVN deployments, the
+  /// @dev Step 2: DVNs on the receive library — our DVN deployments, the
   ///      SOURCE chain's confirmations.
   function _planReceiveConfig(
     QuipToken token,
@@ -197,8 +205,8 @@ abstract contract WireQuipTokenBase is Script {
     });
   }
 
-  /// @dev Compares the EFFECTIVE config (custom merged over default), which is
-  ///      what the library enforces. NIL optional DVNs read back as zero.
+  /// @dev Require both the effective policy and explicit application overrides.
+  ///      Matching defaults alone are mutable; NIL optional DVNs pin them off.
   function _ulnMatches(
     ILayerZeroEndpointV2 endpoint,
     address oapp,
@@ -208,9 +216,13 @@ abstract contract WireQuipTokenBase is Script {
     uint64 confirmations
   ) internal view returns (bool) {
     UlnConfig memory got = abi.decode(endpoint.getConfig(oapp, lib, eid, CONFIG_TYPE_ULN), (UlnConfig));
+    UlnConfig memory pinned = IAppUlnConfig(lib).getAppUlnConfig(oapp, eid);
     address[] memory want = LzConfig.requiredDvns(local);
     return got.confirmations == confirmations && got.requiredDVNCount == 2 && got.optionalDVNCount == 0
-      && got.requiredDVNs.length == 2 && got.requiredDVNs[0] == want[0] && got.requiredDVNs[1] == want[1];
+      && got.requiredDVNs.length == 2 && got.requiredDVNs[0] == want[0] && got.requiredDVNs[1] == want[1]
+      && pinned.confirmations == confirmations && pinned.requiredDVNCount == 2 && pinned.requiredDVNs.length == 2
+      && pinned.requiredDVNs[0] == want[0] && pinned.requiredDVNs[1] == want[1]
+      && pinned.optionalDVNCount == NIL_DVN_COUNT && pinned.optionalDVNThreshold == 0 && pinned.optionalDVNs.length == 0;
   }
 
   function _executorMatches(
@@ -221,6 +233,8 @@ abstract contract WireQuipTokenBase is Script {
   ) internal view returns (bool) {
     ExecutorConfig memory got =
       abi.decode(endpoint.getConfig(oapp, local.sendLib, eid, CONFIG_TYPE_EXECUTOR), (ExecutorConfig));
-    return got.executor == local.executor && got.maxMessageSize == LzConfig.MAX_MESSAGE_SIZE;
+    (uint32 maxMessageSize, address executor) = IAppExecutorConfig(local.sendLib).executorConfigs(oapp, eid);
+    return got.executor == local.executor && got.maxMessageSize == LzConfig.MAX_MESSAGE_SIZE
+      && executor == local.executor && maxMessageSize == LzConfig.MAX_MESSAGE_SIZE;
   }
 }
